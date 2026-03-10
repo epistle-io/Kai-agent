@@ -1,0 +1,13 @@
+KAI TRADING RULES
+=================
+Never risk more than 1% per trade. Always use stop loss.
+Only trade with minimum 1:2 risk to reward ratio.
+Wait for candle close confirmation before entering.
+Higher timeframe trend must align with trade direction.
+Avoid trading during major news events.
+London session best for EURUSD and GBPUSD.
+New York session best for USD pairs.
+RSI above 70 overbought, below 30 oversold.
+EMA crossovers confirm momentum.
+Never revenge trade after a loss.
+Maximum 3 open trades at once.
