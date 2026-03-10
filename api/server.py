@@ -67,23 +67,32 @@ def trigger_scan(background_tasks: BackgroundTasks):
 @app.post("/approve/{symbol}")
 def approve_trade(symbol: str, approval: TradeApproval, background_tasks: BackgroundTasks):
     suggestions = state.get_latest_suggestions()
+    
+    # Try exact match first, then partial match
     suggestion = next((s for s in suggestions if s.get("symbol") == symbol), None)
     if not suggestion:
-        raise HTTPException(404, f"No suggestion for {symbol}")
+        suggestion = next((s for s in suggestions if symbol in s.get("symbol","") or s.get("symbol","") in symbol), None)
+    
+    if not suggestion:
+        raise HTTPException(404, f"No suggestion found for {symbol}. Available: {[s.get('symbol') for s in suggestions]}")
     if suggestion.get("status") != "PENDING_APPROVAL":
-        raise HTTPException(400, "No pending trade for this symbol")
+        raise HTTPException(400, f"Trade status is '{suggestion.get('status')}' not PENDING_APPROVAL")
 
     def execute():
         from agent.scheduler import execute_approved_trade
+        log("info", f"Executing trade: {suggestion.get('signal')} {suggestion.get('symbol')}")
         result = execute_approved_trade(suggestion)
+        log("info", f"Trade result: {result}")
         status = "EXECUTED" if result.get("success") else "FAILED"
         state.update_suggestion_status(symbol, status, {"execution_result": result})
         if result.get("success"):
             state.add_to_history({**suggestion, **result, "status": "EXECUTED"})
+        else:
+            send_general_message(f"Trade failed: {result.get('error', 'Unknown error')}")
 
     state.update_suggestion_status(symbol, "APPROVED")
     background_tasks.add_task(execute)
-    return {"message": f"Approved! Placing {suggestion.get('signal')} on {symbol}...", "symbol": symbol}
+    return {"message": f"Approved! Placing {suggestion.get('signal')} on {suggestion.get('symbol')}...", "symbol": symbol}
 
 @app.post("/reject/{symbol}")
 def reject_trade(symbol: str):
