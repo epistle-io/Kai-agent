@@ -1,25 +1,13 @@
-"""agent/trading_brain.py — Market analysis with knowledge feed"""
+"""agent/trading_brain.py — Market analysis (token efficient)"""
 import json
 from utils.groq_client import chat
 from utils.logger import log, save_report
 
-ANALYSIS_PROMPT = """You are a professional forex and crypto technical analyst.
-Analyze the market data and return ONLY valid JSON:
-{
-  "analysis": "3-4 sentence market analysis",
-  "signal": "BUY" or "SELL" or "WAIT",
-  "confidence": 1-10,
-  "reasoning": "why this signal",
-  "entry_price": number,
-  "stop_loss_pips": number,
-  "take_profit_pips": number,
-  "risk_reward": "e.g. 1:2",
-  "warnings": "any concerns"
-}
-Only BUY/SELL when confidence >= 6. Return ONLY JSON."""
+ANALYSIS_PROMPT = """You are a forex/crypto technical analyst. Analyze market data and return ONLY valid JSON:
+{"analysis":"2 sentence summary","signal":"BUY|SELL|WAIT","confidence":1-10,"reasoning":"brief why","entry_price":0.0,"stop_loss_pips":0,"take_profit_pips":0,"risk_reward":"1:2","warnings":"any"}
+Only signal BUY/SELL if confidence>=6. Return JSON only, no extra text."""
 
 def analyze_market(symbol, timeframe, market_summary, account_info):
-    # Try to get pattern insights and knowledge
     pattern_insights = ""
     knowledge_context = ""
     try:
@@ -28,26 +16,35 @@ def analyze_market(symbol, timeframe, market_summary, account_info):
     except: pass
     try:
         from memory.knowledge_feed import search_knowledge
-        knowledge_context = search_knowledge(f"{symbol} {timeframe} trading strategy", top_k=2)
+        knowledge_context = search_knowledge(f"{symbol} {timeframe}", top_k=1)
     except: pass
 
-    user_message = f"""
-Analyze this market:
-SYMBOL: {symbol} | TIMEFRAME: {timeframe}
-MARKET DATA: {json.dumps(market_summary, indent=2)}
-ACCOUNT: Balance {account_info.get('balance')} {account_info.get('currency')}
-"""
-    if pattern_insights:
-        user_message += f"\nHISTORICAL PATTERNS:\n{pattern_insights}"
+    # Keep market data concise — only send what matters
+    key_data = {
+        "symbol": symbol, "timeframe": timeframe,
+        "price": market_summary.get("current_price"),
+        "ema9": market_summary.get("ema9"),
+        "ema21": market_summary.get("ema21"),
+        "ema50": market_summary.get("ema50"),
+        "rsi": market_summary.get("rsi"),
+        "macd": market_summary.get("macd"),
+        "macd_signal": market_summary.get("macd_signal"),
+        "atr": market_summary.get("atr"),
+        "trend": market_summary.get("trend"),
+        "rsi_signal": market_summary.get("rsi_signal"),
+    }
+
+    user_message = f"Analyze: {json.dumps(key_data)}\nBalance: ${account_info.get('balance')}"
+    if pattern_insights and "No historical" not in pattern_insights:
+        user_message += f"\nPatterns: {pattern_insights}"
     if knowledge_context:
-        user_message += f"\n{knowledge_context}"
-    user_message += "\nReturn JSON only."
+        user_message += f"\n{knowledge_context[:200]}"
 
     try:
         raw = chat(
             messages=[{"role":"system","content":ANALYSIS_PROMPT},
                       {"role":"user","content":user_message}],
-            temperature=0.3, max_tokens=1024,
+            temperature=0.3, max_tokens=300,
         )
         suggestion = _parse_json(raw)
         suggestion["symbol"] = symbol
