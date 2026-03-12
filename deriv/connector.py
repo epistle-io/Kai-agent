@@ -7,10 +7,10 @@ from datetime import datetime
 from dotenv import load_dotenv
 from utils.logger import log
 load_dotenv()
- 
+
 METAAPI_TOKEN      = os.getenv("METAAPI_TOKEN", "")
 METAAPI_ACCOUNT_ID = os.getenv("METAAPI_ACCOUNT_ID", "")
- 
+
 SYMBOL_MAP = {
     "frxEURUSD":"EURUSDm","EURUSD":"EURUSDm","EURUSDm":"EURUSDm",
     "frxGBPUSD":"GBPUSDm","GBPUSD":"GBPUSDm","GBPUSDm":"GBPUSDm",
@@ -19,10 +19,10 @@ SYMBOL_MAP = {
 TIMEFRAME_MAP = {
     "M1":"1m","M5":"5m","M15":"15m","M30":"30m","H1":"1h","H4":"4h","D1":"1d"
 }
- 
+
 def get_mt5_symbol(symbol):
     return SYMBOL_MAP.get(symbol, symbol)
- 
+
 def run_async(coro):
     try:
         loop = asyncio.get_event_loop()
@@ -32,7 +32,7 @@ def run_async(coro):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         return loop.run_until_complete(coro)
- 
+
 async def _get_connection():
     from metaapi_cloud_sdk import MetaApi
     api        = MetaApi(METAAPI_TOKEN)
@@ -41,7 +41,7 @@ async def _get_connection():
     await connection.connect()
     await connection.wait_synchronized()
     return api, account, connection
- 
+
 async def _get_account_async():
     api, account, conn = await _get_connection()
     try:
@@ -59,7 +59,7 @@ async def _get_account_async():
         }
     finally:
         await conn.close()
- 
+
 async def _get_candles_async(symbol, timeframe, count):
     from metaapi_cloud_sdk import MetaApi
     api     = MetaApi(METAAPI_TOKEN)
@@ -68,7 +68,7 @@ async def _get_candles_async(symbol, timeframe, count):
     sym     = get_mt5_symbol(symbol)
     candles = await account.get_historical_candles(sym, tf, None, count)
     return candles
- 
+
 async def _get_positions_async():
     api, account, conn = await _get_connection()
     try:
@@ -89,50 +89,50 @@ async def _get_positions_async():
         return result
     finally:
         await conn.close()
- 
+
 async def _place_trade_async(symbol, direction, lot, sl_pips, tp_pips):
     api, account, conn = await _get_connection()
     try:
         sym = get_mt5_symbol(symbol)
- 
+
         # Get current price
         price_info  = await conn.get_symbol_price(sym)
         ask         = float(price_info.get("ask", 0))
         bid         = float(price_info.get("bid", 0))
- 
+
         # Pip size per instrument
         is_jpy  = "JPY" in sym
         is_btc  = "BTC" in sym
         pip_size = 0.001 if is_jpy else (1.0 if is_btc else 0.0001)
- 
+
         entry = ask if direction == "BUY" else bid
         sl_distance = float(sl_pips) * pip_size
         tp_distance = float(tp_pips) * pip_size
- 
+
         if direction == "BUY":
             sl_price = round(entry - sl_distance, 5)
             tp_price = round(entry + tp_distance, 5)
         else:
             sl_price = round(entry + sl_distance, 5)
             tp_price = round(entry - tp_distance, 5)
- 
+
         log("info", f"MetaApi order: {direction} {sym} lot={lot} entry~{entry} SL={sl_price} TP={tp_price}")
- 
+
         # MetaApi v29 uses separate buy/sell methods
         if direction == "BUY":
             result = await conn.create_market_buy_order(
                 sym, float(lot), sl_price, tp_price,
-                {"comment": "KAI", "clientId": "KAI"}
+                {"comment": "KAI"}
             )
         else:
             result = await conn.create_market_sell_order(
                 sym, float(lot), sl_price, tp_price,
-                {"comment": "KAI", "clientId": "KAI"}
+                {"comment": "KAI"}
             )
- 
+
         order_id = result.get("orderId") or result.get("positionId")
         log("info", f"✅ Trade placed! {direction} {sym} ticket={order_id} SL={sl_price} TP={tp_price}")
- 
+
         return {
             "success":     True,
             "ticket":      order_id,
@@ -151,7 +151,7 @@ async def _place_trade_async(symbol, direction, lot, sl_pips, tp_pips):
         return {"success": False, "error": str(e)}
     finally:
         await conn.close()
- 
+
 async def _close_position_async(ticket):
     api, account, conn = await _get_connection()
     try:
@@ -161,9 +161,9 @@ async def _close_position_async(ticket):
         return {"success": False, "error": str(e)}
     finally:
         await conn.close()
- 
+
 # ─── Public synchronous API ───────────────────────────────────────────────────
- 
+
 def connect():
     try:
         if not METAAPI_TOKEN or not METAAPI_ACCOUNT_ID:
@@ -174,17 +174,17 @@ def connect():
     except Exception as e:
         log("error", f"MetaApi connect error: {e}")
         return False
- 
+
 def disconnect():
     log("info", "MetaApi: Disconnected.")
- 
+
 def get_account_info():
     try:
         return run_async(_get_account_async())
     except Exception as e:
         log("error", f"Account info error: {e}")
         return {"balance":0,"equity":0,"currency":"USD","profit":0,"free_margin":0,"leverage":2000}
- 
+
 def get_fresh_balance():
     try:
         info = run_async(_get_account_async())
@@ -192,7 +192,7 @@ def get_fresh_balance():
     except Exception as e:
         log("error", f"Balance fetch error: {e}")
         return None
- 
+
 def get_candles(symbol, timeframe, count=100):
     import pandas as pd
     try:
@@ -214,17 +214,17 @@ def get_candles(symbol, timeframe, count=100):
     except Exception as e:
         log("error", f"Candles error: {e}")
         return None
- 
+
 def get_open_positions():
     try:
         return run_async(_get_positions_async())
     except Exception as e:
         log("error", f"Positions error: {e}")
         return []
- 
+
 def get_open_symbols(positions):
     return [p.get("symbol") for p in positions]
- 
+
 def place_trade(symbol, direction, lot, sl_pips, tp_pips):
     try:
         return run_async(_place_trade_async(
@@ -233,13 +233,13 @@ def place_trade(symbol, direction, lot, sl_pips, tp_pips):
     except Exception as e:
         log("error", f"Place trade error: {e}")
         return {"success": False, "error": str(e)}
- 
+
 def close_position(ticket):
     try:
         return run_async(_close_position_async(ticket))
     except Exception as e:
         return {"success": False, "error": str(e)}
- 
+
 def calculate_lot_size(symbol, risk_percent, sl_pips):
     try:
         balance     = float(get_account_info().get("balance", 10000))
