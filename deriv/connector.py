@@ -104,8 +104,8 @@ async def _place_trade_async(symbol, direction, lot, sl_pips, tp_pips):
         bid = float(price_info.get("bid", 0))
 
         # Determine pip size
-        is_jpy  = "JPY" in sym
-        is_btc  = "BTC" in sym
+        is_jpy  = "JPY" in (sym or "")
+        is_btc  = "BTC" in (sym or "")
         pip_size = 0.001 if is_jpy else (1.0 if is_btc else 0.0001)
 
         entry = ask if direction == "BUY" else bid
