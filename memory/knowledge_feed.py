@@ -3,7 +3,10 @@ import os, sqlite3
 from datetime import datetime
 from utils.logger import log
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "kai_memory.db")
+DB_PATH = os.environ.get(
+    "KAI_DB_PATH",
+    os.path.join(os.path.dirname(__file__), "kai_memory.db")
+)
 KNOWLEDGE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "knowledge")
 
 def get_db():

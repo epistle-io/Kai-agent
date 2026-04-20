@@ -64,3 +64,31 @@ def get_market_summary(df: pd.DataFrame, symbol: str) -> dict:
         "candles_analyzed": len(df),
         "price_change": round(float(last["close"] - prev["close"]), 5),
     }
+
+
+def get_swing_levels(df: pd.DataFrame, lookback: int = 30) -> dict:
+    """Detect nearest swing high (resistance) and swing low (support) from recent candles."""
+    if df is None or len(df) < lookback + 4:
+        return {"resistance": None, "support": None}
+
+    highs  = df["high"].values
+    lows   = df["low"].values
+    n      = len(df)
+    start  = max(0, n - lookback)
+
+    swing_highs, swing_lows = [], []
+    for i in range(start + 2, n - 2):
+        if (highs[i] > highs[i-1] and highs[i] > highs[i-2] and
+                highs[i] > highs[i+1] and highs[i] > highs[i+2]):
+            swing_highs.append(round(float(highs[i]), 5))
+        if (lows[i] < lows[i-1] and lows[i] < lows[i-2] and
+                lows[i] < lows[i+1] and lows[i] < lows[i+2]):
+            swing_lows.append(round(float(lows[i]), 5))
+
+    price = float(df["close"].iloc[-1])
+    above = [h for h in swing_highs if h > price]
+    below = [l for l in swing_lows  if l < price]
+    return {
+        "resistance": min(above) if above else None,
+        "support":    max(below) if below else None,
+    }

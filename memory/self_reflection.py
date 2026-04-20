@@ -4,7 +4,10 @@ from datetime import datetime, timedelta
 from utils.logger import log
 from utils.groq_client import chat
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "kai_memory.db")
+DB_PATH = os.environ.get(
+    "KAI_DB_PATH",
+    os.path.join(os.path.dirname(__file__), "kai_memory.db")
+)
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)

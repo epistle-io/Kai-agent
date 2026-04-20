@@ -23,15 +23,16 @@ TIMEFRAME_MAP = {
 def get_mt5_symbol(symbol):
     return SYMBOL_MAP.get(symbol, symbol)
 
+# Persistent event loop for the scheduler thread — avoids creating/abandoning
+# loops on every call, which leaks async tasks from the MetaApi SDK.
+_scheduler_loop = None
+
 def run_async(coro):
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed(): raise RuntimeError
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(coro)
+    global _scheduler_loop
+    if _scheduler_loop is None or _scheduler_loop.is_closed():
+        _scheduler_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_scheduler_loop)
+    return _scheduler_loop.run_until_complete(coro)
 
 async def _get_connection():
     from metaapi_cloud_sdk import MetaApi
@@ -62,12 +63,122 @@ async def _get_account_async():
 
 async def _get_candles_async(symbol, timeframe, count):
     from metaapi_cloud_sdk import MetaApi
-    api     = MetaApi(METAAPI_TOKEN)
-    account = await api.metatrader_account_api.get_account(METAAPI_ACCOUNT_ID)
-    tf      = TIMEFRAME_MAP.get(timeframe, "5m")
-    sym     = get_mt5_symbol(symbol)
-    candles = await account.get_historical_candles(sym, tf, None, count)
-    return candles
+    api = MetaApi(METAAPI_TOKEN)
+    try:
+        account = await api.metatrader_account_api.get_account(METAAPI_ACCOUNT_ID)
+        tf      = TIMEFRAME_MAP.get(timeframe, "5m")
+        sym     = get_mt5_symbol(symbol)
+        candles = await account.get_historical_candles(sym, tf, None, count)
+        return candles
+    finally:
+        try:
+            await api.close()
+        except Exception:
+            pass
+
+
+async def _cycle_data_async(symbols, candle_count):
+    """Single MetaApi session for an entire analysis cycle.
+    Fetches account info, positions, and M5/H1/H4 candles for every symbol.
+    Returns: account_info, positions, {symbol: {"M5": df, "H1": df, "H4": df}}
+    """
+    import pandas as pd
+    from metaapi_cloud_sdk import MetaApi
+    api = MetaApi(METAAPI_TOKEN)
+    try:
+        account = await api.metatrader_account_api.get_account(METAAPI_ACCOUNT_ID)
+        conn = account.get_rpc_connection()
+        await conn.connect()
+        await conn.wait_synchronized()
+
+        # Account info
+        info = await conn.get_account_information()
+        account_info = {
+            "balance":      float(info.get("balance", 0)),
+            "equity":       float(info.get("equity", 0)),
+            "currency":     info.get("currency", "USD"),
+            "profit":       float(info.get("profit", 0)),
+            "free_margin":  float(info.get("freeMargin", 0)),
+            "leverage":     int(info.get("leverage", 2000)),
+            "login":        str(info.get("login", "")),
+            "server":       "Exness-MT5Trial9",
+            "account_type": "MT5 Standard Demo",
+        }
+
+        # Open positions
+        positions_raw = await conn.get_positions()
+        positions = []
+        for p in positions_raw:
+            positions.append({
+                "ticket":     p.get("id"),
+                "symbol":     p.get("symbol", ""),
+                "type":       "BUY" if p.get("type") == "POSITION_TYPE_BUY" else "SELL",
+                "lot":        float(p.get("volume", 0)),
+                "open_price": float(p.get("openPrice", 0)),
+                "sl":         float(p.get("stopLoss") or 0),
+                "tp":         float(p.get("takeProfit") or 0),
+                "profit":     float(p.get("profit", 0)),
+                "open_time":  str(p.get("time", "")),
+            })
+
+        await conn.close()
+
+        # Candles — M5 (entry), H1 (confirmation), H4 (trend)
+        TF_CONFIG = [
+            ("M5", "5m",  candle_count),
+            ("H1", "1h",  50),
+            ("H4", "4h",  30),
+        ]
+
+        def _to_df(candles):
+            rows = [{"time": c.get("time", ""), "open": float(c.get("open", 0)),
+                     "high": float(c.get("high", 0)), "low": float(c.get("low", 0)),
+                     "close": float(c.get("close", 0))} for c in candles]
+            df = pd.DataFrame(rows)
+            df["time"] = pd.to_datetime(df["time"])
+            return df
+
+        multi_tf_candles = {}
+        for symbol in symbols:
+            sym    = get_mt5_symbol(symbol)
+            tf_dfs = {}
+            for tf_label, tf_api, count in TF_CONFIG:
+                try:
+                    candles = await account.get_historical_candles(sym, tf_api, None, count)
+                    if candles:
+                        tf_dfs[tf_label] = _to_df(candles)
+                        log("info", f"MetaApi: {symbol} {tf_label} — {len(candles)} candles")
+                    else:
+                        tf_dfs[tf_label] = None
+                except Exception as e:
+                    log("error", f"Candles error {symbol} {tf_label}: {e}")
+                    tf_dfs[tf_label] = None
+            multi_tf_candles[symbol] = tf_dfs
+
+        return account_info, positions, multi_tf_candles
+    finally:
+        try:
+            await api.close()
+        except Exception as e:
+            log("warning", f"MetaApi close warning: {e}")
+
+
+def get_cycle_data(pairs, candle_count=100):
+    """Fetch account info, positions, and M5/H1/H4 candles in a single MetaApi session.
+    Returns: (account_info_dict, positions_list, {symbol: {"M5": df, "H1": df, "H4": df}})
+    """
+    try:
+        symbols = [p["symbol"] for p in pairs]
+        return run_async(_cycle_data_async(symbols, candle_count))
+    except Exception as e:
+        log("error", f"Cycle data error: {e}")
+        return (
+            {"balance": 0, "equity": 0, "currency": "USD", "profit": 0,
+             "free_margin": 0, "leverage": 2000, "login": "",
+             "server": "Exness-MT5Trial9", "account_type": "MT5 Standard Demo"},
+            [],
+            {}
+        )
 
 async def _get_positions_async():
     api, account, conn = await _get_connection()
@@ -240,9 +351,12 @@ def close_position(ticket):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def calculate_lot_size(symbol, risk_percent, sl_pips):
+def calculate_lot_size(symbol, risk_percent, sl_pips, balance=None):
     try:
-        balance     = float(get_account_info().get("balance", 10000))
+        if balance is None:
+            balance = float(get_account_info().get("balance", 10000))
+        else:
+            balance = float(balance)
         risk_amount = balance * (risk_percent / 100)
         pip_value   = 10.0 if "BTC" not in symbol else 1.0
         lot         = risk_amount / (float(sl_pips) * pip_value)
