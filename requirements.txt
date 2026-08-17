@@ -10,4 +10,6 @@ websockets==13.0
 pypdf==4.3.1
 pydantic==2.9.2
 metaapi-cloud-sdk==29.1.1
+google-genai
+httpx>=0.28.0
  

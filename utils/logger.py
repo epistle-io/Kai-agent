@@ -2,23 +2,51 @@ import logging
 import json
 import os
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
+from contextvars import ContextVar
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
 logger = logging.getLogger("kai")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+
 LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOGS_DIR, "kai.log")
+
+_cycle_id = ContextVar("cycle_id", default="-")
+
+if not logger.handlers:
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(stream_handler)
+
+    file_handler = RotatingFileHandler(LOG_FILE, maxBytes=2_000_000, backupCount=5)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(file_handler)
 
 _recent_logs = []
 
+
+def set_cycle_id(cycle_id: str):
+    _cycle_id.set(cycle_id or "-")
+
+
+def get_cycle_id() -> str:
+    return _cycle_id.get()
+
 def log(level: str, message: str):
-    entry = {"time": datetime.now().isoformat(), "level": level.upper(), "message": message}
+    cid = _cycle_id.get()
+    prefixed = f"[cid:{cid}] {message}" if cid and cid != "-" else message
+    entry = {
+        "time": datetime.now().isoformat(),
+        "level": level.upper(),
+        "cycle_id": cid,
+        "message": prefixed,
+    }
     _recent_logs.append(entry)
     if len(_recent_logs) > 500:
         _recent_logs.pop(0)
-    getattr(logger, level.lower(), logger.info)(message)
+    getattr(logger, level.lower(), logger.info)(prefixed)
 
 def get_recent_logs(n: int = 50):
     return _recent_logs[-n:]

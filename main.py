@@ -10,7 +10,7 @@ from utils.logger import log
 async def lifespan(app):
     log("info", "=" * 50)
     log("info", "  KAI v2 — Personal AI Trading Assistant")
-    log("info", "  Broker: Deriv | AI: Groq llama-3.3-70b")
+    log("info", "  Broker: Deriv | AI: Gemini 2.5 Flash (OpenRouter)")
     log("info", "=" * 50)
 
     def run_scheduler():

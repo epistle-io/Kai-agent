@@ -44,7 +44,7 @@ Best: {best} | Worst: {worst}
 Trades: {summary}
 Write a honest 150-word self-reflection. What worked, what didn't, what to change next week. KAI's casual voice."""
     try:
-        reflection = chat([{"role":"user","content":prompt}], temperature=0.7, max_tokens=300)
+        reflection = chat([{"role":"user","content":prompt}], temperature=0.7, max_tokens=180)
     except Exception as e:
         reflection = f"Reflection failed: {e}"
 
